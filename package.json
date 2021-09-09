@@ -1,0 +1,11 @@
+{
+  "name": "oauth-code-signin",
+  "version": "1.0.0",
+  "description": "Signin with OAuth Authorization Code Flow",
+  "author": "Tauqeer Hassan",
+  "license": "MIT",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  }
+}
