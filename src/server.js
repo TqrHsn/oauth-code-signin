@@ -1,6 +1,7 @@
-const fs = require('fs')
+const fs = require('fs');
 
-const programName = "oauth-code-token"
+const programName = "oauth-code-token";
+const version = "v0.0.1";
 
 const args = process.argv.slice(2);
 
@@ -32,8 +33,9 @@ USAGE
   ${programName} [flags]
   
 FLAGS
-  -h --help        Show help
-  -c --config      Provide a json file with the required credentials
+  -h, --help        Show help
+  -c, --config      Provide a json file with the required credentials
+  -v, --version     Show version
 
 CONFIGURATION PARAMETERS
 Following fields can be provided via a json property in a config file via --config (-c) argument or environment variables (config file values have higher precedence):
@@ -43,10 +45,14 @@ Following fields can be provided via a json property in a config file via --conf
   CLIENT_SECRET (Optional)
   SCOPE (required)
   REDIRECT_URL (required)
+  SPA (Optional)
   
 NOTE
   The program will try to launch a server on localhost on the port provided in REDIRECT_URL. To login, please open http://localhost:(port in REDIRECT_URL) in a browser.
   `)
+    process.exit();
+  } else if (args[0] == "--version" || args[0] == "-v") {
+    console.info(version);
     process.exit();
   }
 }
@@ -72,12 +78,13 @@ const clientId = ensureNotEmpty("CLIENT_ID");
 const clientSecret = process.env.CLIENT_SECRET || config.CLIENT_SECRET || "";
 let scopes = ensureNotEmpty("SCOPE");
 const scope = scopes.split(',').join(' ');;
-var redirectUrl = ""
+var redirectUrl
 try {
   redirectUrl = new URL(process.env.REDIRECT_URL || config.REDIRECT_URL);
 } catch (error) {
   console.error(`Invalid REDIRECT_URL. ${error}`);
 }
+const isSPA = process.env.SPA === undefined ? config.SPA || false : process.env.SPA || false;
 
 const crypto = require('crypto');
 const { exit } = require('process');
@@ -154,6 +161,10 @@ function getToken(code, onResult) {
     'maxRedirects': 3
   };
 
+  if (isSPA) {
+    options.headers.Origin = `${redirectUrl.protocol}://${redirectUrl.hostname}`; // For AzureAD SPA clients which require this to be present in request.
+  }
+
   const request = https.request(options, function (response) {
     var chunks = [];
 
@@ -184,7 +195,6 @@ var server = require('http').createServer(function (req, res) {
   if (req.url == '/') {
     res.end(getIndexHtml());
   } else if (req.url.startsWith(`${redirectUrl.pathname}?`)) {
-
     const searchParams = new URLSearchParams(req.url.split('?')[1]);
     const code = searchParams.get('code');
     const mState = searchParams.get('state');
