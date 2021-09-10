@@ -1,0 +1,8 @@
+{
+    "AUTH_ENDPOINT": "https://<provider>/connect/authorize",
+    "TOKEN_ENDPOINT": "https://<provider>/connect/token",
+    "CLIENT_ID": "<client_id>",
+    "CLIENT_SECRET": "<client_secret>",
+    "SCOPE": "<comma_separated_scopes>",
+    "REDIRECT_URL": "http://localhost:32567/signin-oidc"
+}

@@ -1,12 +1,86 @@
-const authEndpoint = process.env.AUTH_ENDPOINT;
-const tokenEndpoint = process.env.TOKEN_ENDPOINT;
-const clientId = process.env.CLIENT_ID;
-const clientSecret = process.env.CLIENT_SECRET;
-const scope = process.env.SCOPE.split(',').join(' ');;
-const redirectUrl = new URL(process.env.REDIRECT_URL);
+const fs = require('fs')
 
+const programName = "oauth-code-token"
+
+const args = process.argv.slice(2);
+
+var config = {}
+if (args.length > 0) {
+  if (args[0] == "--config" || args[0] == "-c") {
+    if (args.length < 2) {
+      console.error("File name is required with this argument.");
+      process.exit();
+    } else {
+      let configFile = args[1];
+      try {
+        if (!fs.existsSync(configFile)) {
+          console.error(`File ${configFile} does not exist.`);
+          process.exit();
+        } else {
+          config = JSON.parse(fs.readFileSync(configFile));
+        }
+      } catch (err) {
+        console.error(err);
+        process.exit();
+      }
+    }
+  } else if (args[0] == "--help" || args[0] == "-h") {
+    console.info(
+      `Get a Token using Authorization Code Flow
+      
+USAGE
+  ${programName} [flags]
+  
+FLAGS
+  -h --help        Show help
+  -c --config      Provide a json file with the required credentials
+
+CONFIGURATION PARAMETERS
+Following fields can be provided via a json property in a config file via --config (-c) argument or environment variables (config file values have higher precedence):
+  AUTH_ENDPOINT (required)
+  TOKEN_ENDPOINT (required)
+  CLIENT_ID (required)
+  CLIENT_SECRET (Optional)
+  SCOPE (required)
+  REDIRECT_URL (required)
+  
+NOTE
+  The program will try to launch a server on localhost on the port provided in REDIRECT_URL. To login, please open http://localhost:(port in REDIRECT_URL) in a browser.
+  `)
+    process.exit();
+  }
+}
+
+function exitWithHelp(message) {
+  console.error(`${message}
+
+Run ${programName} --help to get more details.`)
+  process.exit();
+}
+
+function ensureNotEmpty(name) {
+  let val = config[name] || process.env[name] || "";
+  if (val.trim() === "") {
+    exitWithHelp(`${name} is required.`)
+  }
+  return val;
+}
+
+const authEndpoint = ensureNotEmpty("AUTH_ENDPOINT");
+const tokenEndpoint = ensureNotEmpty("TOKEN_ENDPOINT");
+const clientId = ensureNotEmpty("CLIENT_ID");
+const clientSecret = process.env.CLIENT_SECRET || config.CLIENT_SECRET || "";
+let scopes = ensureNotEmpty("SCOPE");
+const scope = scopes.split(',').join(' ');;
+var redirectUrl = ""
+try {
+  redirectUrl = new URL(process.env.REDIRECT_URL || config.REDIRECT_URL);
+} catch (error) {
+  console.error(`Invalid REDIRECT_URL. ${error}`);
+}
 
 const crypto = require('crypto');
+const { exit } = require('process');
 
 function base64URLEncode(str) {
   return str.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
@@ -40,8 +114,8 @@ function getIndexHtml() {
     </div>
   </div>
   <div style="bottom: 0px;position: fixed;height: 28px;width: 100%;text-align: center;background-color: #232323;/* text-align: center; */line-height: 24px;">
-    <a href="https://github.com/TqrHsn/oauth-code-signin" style="color: white; font-size: 0.8em; font-family: sans-serif;">
-      <span><svg viewBox="0 0 92 92" version="1.1" xmlns="http://www.w3.org/2000/svg" style="height: 14px; margin-right: 6px; transform: translateY(3px);"><g stroke="none" fill="white"><path d="M90.155,41.965 L50.036,1.847 C47.726,-0.464 43.979,-0.464 41.667,1.847 L33.336,10.179 L43.904,20.747 C46.36,19.917 49.176,20.474 51.133,22.431 C53.102,24.401 53.654,27.241 52.803,29.706 L62.989,39.891 C65.454,39.041 68.295,39.59 70.264,41.562 C73.014,44.311 73.014,48.768 70.264,51.519 C67.512,54.271 63.056,54.271 60.303,51.519 C58.235,49.449 57.723,46.409 58.772,43.861 L49.272,34.362 L49.272,59.358 C49.942,59.69 50.575,60.133 51.133,60.69 C53.883,63.44 53.883,67.896 51.133,70.65 C48.383,73.399 43.924,73.399 41.176,70.65 C38.426,67.896 38.426,63.44 41.176,60.69 C41.856,60.011 42.643,59.497 43.483,59.153 L43.483,33.925 C42.643,33.582 41.858,33.072 41.176,32.389 C39.093,30.307 38.592,27.249 39.661,24.691 L29.243,14.271 L1.733,41.779 C-0.578,44.092 -0.578,47.839 1.733,50.15 L41.854,90.268 C44.164,92.578 47.91,92.578 50.223,90.268 L90.155,50.336 C92.466,48.025 92.466,44.275 90.155,41.965"></path></g></svg></span><span>github.com/tqrhsn/oauth-code-signin</span>
+    <a href="https://github.com/TqrHsn/oauth-code-token" style="color: white; font-size: 0.8em; font-family: sans-serif;">
+      <span><svg viewBox="0 0 92 92" version="1.1" xmlns="http://www.w3.org/2000/svg" style="height: 14px; margin-right: 6px; transform: translateY(3px);"><g stroke="none" fill="white"><path d="M90.155,41.965 L50.036,1.847 C47.726,-0.464 43.979,-0.464 41.667,1.847 L33.336,10.179 L43.904,20.747 C46.36,19.917 49.176,20.474 51.133,22.431 C53.102,24.401 53.654,27.241 52.803,29.706 L62.989,39.891 C65.454,39.041 68.295,39.59 70.264,41.562 C73.014,44.311 73.014,48.768 70.264,51.519 C67.512,54.271 63.056,54.271 60.303,51.519 C58.235,49.449 57.723,46.409 58.772,43.861 L49.272,34.362 L49.272,59.358 C49.942,59.69 50.575,60.133 51.133,60.69 C53.883,63.44 53.883,67.896 51.133,70.65 C48.383,73.399 43.924,73.399 41.176,70.65 C38.426,67.896 38.426,63.44 41.176,60.69 C41.856,60.011 42.643,59.497 43.483,59.153 L43.483,33.925 C42.643,33.582 41.858,33.072 41.176,32.389 C39.093,30.307 38.592,27.249 39.661,24.691 L29.243,14.271 L1.733,41.779 C-0.578,44.092 -0.578,47.839 1.733,50.15 L41.854,90.268 C44.164,92.578 47.91,92.578 50.223,90.268 L90.155,50.336 C92.466,48.025 92.466,44.275 90.155,41.965"></path></g></svg></span><span>github.com/tqrhsn/oauth-code-token</span>
     </a>
   </div>
 </body>
@@ -127,4 +201,5 @@ var server = require('http').createServer(function (req, res) {
 
 server.listen(redirectUrl.port, () => {
   console.log(`Listening on port: ${redirectUrl.port}`);
+  console.info(`Please open http://localhost:${redirectUrl.port} in a browser to retrieve token.`);
 });
