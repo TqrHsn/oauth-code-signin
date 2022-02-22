@@ -1,11 +1,26 @@
 const fs = require('fs');
 
 const programName = "oauth-code-token";
-const version = "v0.0.1";
-
+const version = "v0.0.2";
 const args = process.argv.slice(2);
-
 var config = {}
+
+function getConfig(name) {
+  let val = config[name] || process.env[name] || "";
+  return val;
+}
+
+function ensureNotEmpty(name) {
+  let val = getConfig(name);
+  if (val.trim() === "") {
+    console.error(`${name} is required.
+    
+Run ${programName} --help to get more details.`)
+    process.exit();
+  }
+  return val;
+}
+
 if (args.length > 0) {
   if (args[0] == "--config" || args[0] == "-c") {
     if (args.length < 2) {
@@ -38,9 +53,8 @@ FLAGS
   -v, --version     Show version
 
 CONFIGURATION PARAMETERS
-Following fields can be provided via a json property in a config file via --config (-c) argument or environment variables (config file values have higher precedence):
-  AUTH_ENDPOINT (required)
-  TOKEN_ENDPOINT (required)
+Following fields can be provided via json property in a config file via --config (-c) argument or environment variables (config file values have higher precedence):
+  ISSUER_ENDPOINT (required)
   CLIENT_ID (required)
   CLIENT_SECRET (Optional)
   SCOPE (required)
@@ -57,47 +71,108 @@ NOTE
   }
 }
 
-function exitWithHelp(message) {
-  console.error(`${message}
-
-Run ${programName} --help to get more details.`)
-  process.exit();
-}
-
-function ensureNotEmpty(name) {
-  let val = config[name] || process.env[name] || "";
-  if (val.trim() === "") {
-    exitWithHelp(`${name} is required.`)
-  }
-  return val;
-}
-
-const authEndpoint = ensureNotEmpty("AUTH_ENDPOINT");
-const tokenEndpoint = ensureNotEmpty("TOKEN_ENDPOINT");
 const clientId = ensureNotEmpty("CLIENT_ID");
-const clientSecret = process.env.CLIENT_SECRET || config.CLIENT_SECRET || "";
+const clientSecret = getConfig("CLIENT_SECRET");
 let scopes = ensureNotEmpty("SCOPE");
 const scope = scopes.split(',').join(' ');;
 var redirectUrl
 try {
-  redirectUrl = new URL(process.env.REDIRECT_URL || config.REDIRECT_URL);
+  redirectUrl = new URL(getConfig("REDIRECT_URL"));
 } catch (error) {
   console.error(`Invalid REDIRECT_URL. ${error}`);
+  process.exit(1);
 }
+
+var issuerEndpoint
+try {
+  issuerEndpoint = new URL(getConfig("ISSUER_ENDPOINT"));
+} catch (error) {
+  console.error(`Invalid ISSUER_ENDPOINT. ${error}`);
+  process.exit(1);
+}
+
 const isSPA = process.env.SPA === undefined ? config.SPA || false : process.env.SPA || false;
 
-const crypto = require('crypto');
-const { exit } = require('process');
+var authEndpoint = "";
+var tokenEndpoint = "";
 
-function base64URLEncode(str) {
-  return str.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
+const https = require('https');
+const crypto = require('crypto');
 const codeChallengeMethod = 'S256';
 
 let codeVerifier = '';
 let codeChallenge = '';
 let state = '';
 let nonce = '';
+
+(async () => {
+  const options = {
+    method: 'GET',
+    hostname: issuerEndpoint.hostname,
+    path: `${issuerEndpoint.pathname.replace(/\/$/,"")}/.well-known/openid-configuration`,
+    maxRedirects: 3
+  };
+  try {
+    let res = await httpsRequestAsync(options);
+    let bodyStr = Buffer.concat(res.body).toString();
+    if (res.res.statusCode < 200 || res.res.statusCode >= 300) {
+      console.error(`Failed to get openid-configuration. Status: ${res.res.statusCode}, Body: ${bodyStr}`);
+      process.exit(1);
+    }
+    let json = JSON.parse(bodyStr);
+    if (json.hasOwnProperty('authorization_endpoint')) {
+      authEndpoint = json.authorization_endpoint;
+    } else {
+      console.error(`authorization_endpoint not found from openid-configuration url.`);
+      process.exit(1);
+    }
+
+    if (json.hasOwnProperty('token_endpoint')) {
+      tokenEndpoint = json.token_endpoint;
+    } else {
+      console.error(`token_endpoint not found from openid-configuration url.`);
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(`Failed to get openid-configuration. ${error}`);
+    process.exit(1);
+  }
+
+  var server = require('http').createServer(async function (req, res) {
+    if (req.url == '/') {
+      res.end(getIndexHtml());
+    } else if (req.url.startsWith(`${redirectUrl.pathname}?`)) {
+      const searchParams = new URLSearchParams(req.url.split('?')[1]);
+      const code = searchParams.get('code');
+      const mState = searchParams.get('state');
+      res.setHeader("Content-Type", "application/json");
+      if (mState == state) {
+        try {
+          let codeRes = await echangeForTokenAsync(code);
+          let bodyStr = Buffer.concat(codeRes.body).toString();
+          if (codeRes.res.statusCode < 200 || codeRes.res.statusCode >= 300) {
+            let resStr = `Failed to exchange code for token. Status: ${codeRes.res.statusCode}, Body: ${bodyStr}`;
+            res.end(resStr);
+          }
+          res.end(bodyStr);
+        } catch (error) {
+          res.end(error.toString());
+        }
+      } else {
+        res.end('Error validating state. Possible CSRF.');
+      }
+    }
+  });
+
+  server.listen(redirectUrl.port, () => {
+    console.log(`Listening on port: ${redirectUrl.port}`);
+    console.info(`Please open http://localhost:${redirectUrl.port} in a browser to retrieve token.`);
+  });
+})();
+
+function base64URLEncode(str) {
+  return str.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
 
 function getIndexHtml() {
   codeVerifier = base64URLEncode(crypto.randomBytes(32));
@@ -107,8 +182,8 @@ function getIndexHtml() {
 
   const query = `client_id=${clientId}&response_type=code&scope=${scope}&redirect_uri=${redirectUrl.href}&state=${state}&nonce=${nonce}&code_challenge=${codeChallenge}&code_challenge_method=${codeChallengeMethod}`;
   const url = `${authEndpoint}?${encodeURI(query)}`;
-  const index = `
-<!DOCTYPE html>
+
+  return `<!DOCTYPE html>
 <html>
 <head>
   <title>OAuth 2.0 (Authorization Code flow with PKCE)</title>
@@ -126,14 +201,10 @@ function getIndexHtml() {
     </a>
   </div>
 </body>
-</html>
-`;
-
-  return index;
+</html>`;
 }
 
-function getToken(code, onResult) {
-  const https = require('https');
+async function echangeForTokenAsync(code) {
   const tokenUrl = new URL(tokenEndpoint);
 
   let postData = {
@@ -165,51 +236,29 @@ function getToken(code, onResult) {
     options.headers.Origin = `${redirectUrl.protocol}://${redirectUrl.hostname}`; // For AzureAD SPA clients which require this to be present in request.
   }
 
-  const request = https.request(options, function (response) {
-    var chunks = [];
-
-    response.on("data", function (chunk) {
-      chunks.push(chunk);
-    });
-
-    response.on("end", function (_) {
-      const body = Buffer.concat(chunks);
-      if (onResult) {
-        onResult(body.toString());
-      }
-    });
-
-    response.on("error", function (error) {
-      console.error(error);
-      if (onResult) {
-        onResult(`{${error}}`);
-      }
-    });
-  });
-
-  request.write(formEncoded);
-  request.end();
+  return httpsRequestAsync(options, formEncoded);
 }
 
-var server = require('http').createServer(function (req, res) {
-  if (req.url == '/') {
-    res.end(getIndexHtml());
-  } else if (req.url.startsWith(`${redirectUrl.pathname}?`)) {
-    const searchParams = new URLSearchParams(req.url.split('?')[1]);
-    const code = searchParams.get('code');
-    const mState = searchParams.get('state');
-    res.setHeader("Content-Type", "application/json");
-    if (mState == state) {
-      getToken(code, (body) => {
-        res.end(body);
+function httpsRequestAsync(params, postData) {
+  return new Promise(function (resolve, reject) {
+    var req = https.request(params, function (res) {
+      var body = [];
+      res.on('data', function (chunk) {
+        body.push(chunk);
       });
-    } else {
-      res.end('{Error validating state. Possible CSRF.}');
+      res.on('end', function () {
+        resolve({ res, body });
+      });
+      res.on("error", function (err) {
+        reject(err);
+      })
+    });
+    req.on('error', function (err) {
+      reject(err);
+    });
+    if (postData) {
+      req.write(postData);
     }
-  }
-});
-
-server.listen(redirectUrl.port, () => {
-  console.log(`Listening on port: ${redirectUrl.port}`);
-  console.info(`Please open http://localhost:${redirectUrl.port} in a browser to retrieve token.`);
-});
+    req.end();
+  });
+}
